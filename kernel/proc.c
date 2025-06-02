@@ -681,3 +681,20 @@ procdump(void)
     printf("\n");
   }
 }
+
+// Find a process by PID
+struct proc*
+findproc(int pid)
+{
+  struct proc *p;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    acquire(&p->lock);
+    if(p->pid == pid && p->state != UNUSED) {
+      release(&p->lock);
+      return p;
+    }
+    release(&p->lock);
+  }
+  return 0;
+}

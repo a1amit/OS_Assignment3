@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -183,7 +185,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    
+    // Only free physical memory if it's not a shared page
+    // modified for task 1
+    if(do_free && (*pte & PTE_S) == 0){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
@@ -436,4 +441,109 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+// Map shared pages from src_proc to dst_proc
+uint64
+map_shared_pages(struct proc* src_proc, struct proc* dst_proc, uint64 src_va, uint64 size)
+{
+  uint64 start_va, end_va, dst_va, offset;
+  pte_t *pte;
+  uint64 pa, flags;
+  uint64 mapped_size;
+  
+  if(size == 0)
+    return -1;
+    
+  // Calculate page-aligned boundaries
+  offset = src_va % PGSIZE;
+  start_va = PGROUNDDOWN(src_va);
+  end_va = PGROUNDUP(src_va + size);
+  mapped_size = end_va - start_va;
+  
+  // Find a free virtual address range in destination process
+  // Start looking from the current process size and find unmapped pages
+  dst_va = PGROUNDUP(dst_proc->sz);
+  
+  // Make sure we have enough virtual address space
+  if(dst_va + mapped_size >= MAXVA)
+    return -1;
+  
+  // Check if the destination range is free
+  for(uint64 va = dst_va; va < dst_va + mapped_size; va += PGSIZE) {
+    pte = walk(dst_proc->pagetable, va, 0);
+    if(pte != 0 && (*pte & PTE_V)) {
+      // Address already mapped, this shouldn't happen if we start from sz
+      return -1;
+    }
+  }
+  
+  // Map each page from source to destination
+  for(uint64 va = start_va; va < end_va; va += PGSIZE) {
+    // Get source PTE
+    pte = walk(src_proc->pagetable, va, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0) {
+      // Invalid or non-user page, unmap what we've done so far
+      if(va > start_va) {
+        uvmunmap(dst_proc->pagetable, dst_va, (va - start_va) / PGSIZE, 0);
+      }
+      return -1;
+    }
+    
+    // Get physical address and flags
+    pa = PTE2PA(*pte);
+    flags = PTE_FLAGS(*pte) | PTE_S; // Add shared flag
+    
+    // Map to destination
+    uint64 dst_page_va = dst_va + (va - start_va);
+    if(mappages(dst_proc->pagetable, dst_page_va, PGSIZE, pa, flags) != 0) {
+      // Failed to map, clean up
+      if(va > start_va) {
+        uvmunmap(dst_proc->pagetable, dst_va, (va - start_va) / PGSIZE, 0);
+      }
+      return -1;
+    }
+  }
+  
+  // Update destination process size
+  dst_proc->sz = dst_va + mapped_size;
+  
+  // Return destination virtual address with correct offset
+  return dst_va + offset;
+}
+
+// Unmap shared pages from process
+uint64
+unmap_shared_pages(struct proc* p, uint64 addr, uint64 size)
+{
+  uint64 start_va, end_va;
+  pte_t *pte;
+  uint64 mapped_size;
+  
+  if(size == 0)
+    return 0;
+    
+  // Calculate page-aligned boundaries
+  start_va = PGROUNDDOWN(addr);
+  end_va = PGROUNDUP(addr + size);
+  mapped_size = end_va - start_va;
+  
+  // Verify all pages are shared before unmapping
+  for(uint64 va = start_va; va < end_va; va += PGSIZE) {
+    pte = walk(p->pagetable, va, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_S) == 0) {
+      return -1; // Not a valid shared mapping
+    }
+  }
+  
+  // Unmap the pages (don't free physical memory since it's shared)
+  uvmunmap(p->pagetable, start_va, mapped_size / PGSIZE, 0);
+  
+  // Update process size - if we're unmapping from the end of the address space
+  if(start_va + mapped_size == p->sz) {
+    p->sz = start_va;
+  }
+  // Note: If unmapping from middle, we don't shrink sz to avoid creating holes
+  
+  return 0;
 }
