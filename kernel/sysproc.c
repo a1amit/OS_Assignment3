@@ -96,31 +96,66 @@ sys_map_shared_pages(void)
   int src_pid, dst_pid;
   uint64 src_va, size;
   struct proc *src_proc, *dst_proc;
+  uint64 ret;
   
   argint(0, &src_pid);
   argint(1, &dst_pid);
   argaddr(2, &src_va);
   argaddr(3, &size);
   
-  // Find source and destination processes
   src_proc = findproc(src_pid);
-  dst_proc = findproc(dst_pid);
-  
-  if(src_proc == 0 || dst_proc == 0)
+  if(src_proc == 0)
     return -1;
+
+  dst_proc = findproc(dst_pid);
+  if(dst_proc == 0)
+    return -1;
+
+  // Acquire locks in a consistent order to prevent deadlock
+  // For simplicity, we'll lock src_proc then dst_proc if different.
+  // A more robust way is to lock based on PID or address.
+  // This simple order works if src_proc and dst_proc are always different
+  // or if map_shared_pages handles the case where they are the same
+  // (which it doesn't currently, but it's not a typical use case for this API).
+
+  // For a more robust locking order:
+  struct proc *p1 = src_proc, *p2 = dst_proc;
+  if ((uint64)p1 > (uint64)p2) { // Ensure p1 has a lower memory address than p2
+    struct proc *tmp = p1;
+    p1 = p2;
+    p2 = tmp;
+  }
+
+  acquire(&p1->lock);
+  if (p1 != p2) { // Only acquire second lock if processes are different
+    acquire(&p2->lock);
+  }
+
+  ret = map_shared_pages(src_proc, dst_proc, src_va, size);
+
+  if (p1 != p2) {
+    release(&p2->lock);
+  }
+  release(&p1->lock);
     
-  return map_shared_pages(src_proc, dst_proc, src_va, size);
+  return ret;
 }
 
 uint64
 sys_unmap_shared_pages(void)
 {
   uint64 addr, size;
+  struct proc *p = myproc();
+  uint64 ret;
   
   argaddr(0, &addr);
   argaddr(1, &size);
+
+  acquire(&p->lock);
+  ret = unmap_shared_pages(p, addr, size);
+  release(&p->lock);
   
-  return unmap_shared_pages(myproc(), addr, size);
+  return ret;
 }
 
 uint64
