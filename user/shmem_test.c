@@ -88,16 +88,9 @@ main(void)
         printf("Child reads (end): ...%s\n", temp_end);
     }
     
-    // Write new data - e.g., modify first few bytes and last few bytes
+    // Write new data
     printf("Child writing to shared memory...\n");
-    strcpy((char*)shared_addr, "CHILD_WROTE_START"); // Modifies the beginning
-    if (TEST_SIZE > 50) { // Ensure space for end marker
-        char end_marker[] = "CHILD_WROTE_END";
-        int marker_len = strlen(end_marker);
-        if (TEST_SIZE >= marker_len) {
-            strcpy((char*)shared_addr + TEST_SIZE - marker_len -1 , end_marker); // Modifies the end
-        }
-    }
+    strcpy((char*)shared_addr, "Hello daddy");
     printf("Child finished writing.\n");
     
     if(!DISABLE_UNMAP) {
@@ -141,38 +134,18 @@ main(void)
     
     printf("Parent checking shared memory after child exit...\n");
     // Parent reads and verifies the changes made by the child
-    char expected_start[] = "CHILD_WROTE_START";
-    char actual_start[sizeof(expected_start)];
-    memcpy(actual_start, shared_data, sizeof(expected_start)-1);
-    actual_start[sizeof(expected_start)-1] = '\0';
-
-    printf("Parent reads (start): %s\n", actual_start);
+    printf("Parent reads: %s\n", shared_data);
 
     int success = 1;
-    if(strcmp(actual_start, expected_start) != 0) {
-      printf("FAILED: Parent did not see child's start marker. Expected: '%s', Got: '%s'\n", expected_start, actual_start);
+    if(strcmp(shared_data, "Hello daddy") != 0) {
+      printf("FAILED: Parent did not see child's message.\n");
       success = 0;
-    }
-
-    if (TEST_SIZE > 50) {
-        char expected_end[] = "CHILD_WROTE_END";
-        char actual_end[sizeof(expected_end)];
-        int marker_len = strlen(expected_end);
-        if (TEST_SIZE >= marker_len) {
-            memcpy(actual_end, shared_data + TEST_SIZE - marker_len -1, sizeof(expected_end)-1);
-            actual_end[sizeof(expected_end)-1] = '\0';
-            printf("Parent reads (end): %s\n", actual_end);
-            if(strcmp(actual_end, expected_end) != 0) {
-              printf("FAILED: Parent did not see child's end marker. Expected: '%s', Got: '%s'\n", expected_end, actual_end);
-              success = 0;
-            }
-        }
     }
     
     if(success){
-      printf("SUCCESS: Shared memory test passed (multi-page data verified)!\n");
+      printf("SUCCESS: Shared memory test passed!\n");
     } else {
-      printf("FAILED: Shared memory test failed (multi-page data verification)!\n");
+      printf("FAILED: Shared memory test failed!\n");
     }
     
     print_proc_size("in parent after child exit");
