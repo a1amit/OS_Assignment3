@@ -121,7 +121,7 @@ child_process(uint64 shared_buffer, int child_id, uint64 buffer_size)
         }
         
         // Brief yield to allow other processes to work
-        sleep(1);
+        // sleep(1); // removed for final submission
     }
     
     exit(0);
@@ -196,7 +196,7 @@ parent_process(uint64 shared_buffer, uint64 buffer_size)
         }
         
         // Brief sleep to avoid busy waiting
-        sleep(1);
+        // sleep(1); // removed for final submission
     }
     
     printf("Parent: Read %d messages total\n", messages_read);
